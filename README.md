@@ -19,16 +19,20 @@ AI 飞速发展，没有固定模式，工具应该保持简单。
 ## 使用
 
 ### 1. GUI 模式 (交互式)
+
 - **方法 A**：复制 `INP.py` 全部内容 → 粘贴到 IDA Python 窗口 → 回车。
 - **方法 B**：在 IDA 中选择 `File` -> `Script file...` -> 选择 `INP.py`。
 
 默认导出目录：`{IDB所在目录}/export-for-ai/`
 
 ### 2. Headless 模式 (命令行)
+
 适用于批量处理或自动化流程：
+
 ```bash
 /path/to/idat -c -A -S"INP.py [export_dir]" <target_file>
 ```
+
 *注：如果未指定 `export_dir`，则默认导出到 `{IDB所在目录}/export-for-ai/`。*
 
 ## 导出内容

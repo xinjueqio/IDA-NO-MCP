@@ -17,16 +17,20 @@ AI is evolving rapidly with no fixed patterns—tools should stay simple. Export
 ## Usage
 
 ### 1. GUI Mode (Interactive)
+
 - **Option A**: Copy the entire `INP.py` → Paste into the IDA Python console → Press Enter.
 - **Option B**: In IDA, select `File` -> `Script file...` -> Select `INP.py`.
 
 Default export directory: `{IDB_directory}/export-for-ai/`
 
 ### 2. Headless Mode (CLI)
+
 Suitable for batch processing or automation:
+
 ```bash
 /path/to/idat -c -A -S"INP.py [export_dir]" <target_file>
 ```
+
 *Note: If `export_dir` is not specified, it defaults to `{IDB_directory}/export-for-ai/`.*
 
 ## Exported Content
