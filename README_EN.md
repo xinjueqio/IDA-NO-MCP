@@ -16,41 +16,87 @@ AI is evolving rapidly with no fixed patterns—tools should stay simple. Export
 
 ## Usage
 
-### 1. GUI Mode (Interactive)
+### Plugin Mode
 
-- **Option A**: Copy the entire `INP.py` → Paste into the IDA Python console → Press Enter.
-- **Option B**: In IDA, select `File` -> `Script file...` -> Select `INP.py`.
+Copy `INP.py` to the IDA plugins directory:
 
-Default export directory: `{IDB_directory}/export-for-ai/`
+- **Windows**: `%APPDATA%\Hex-Rays\IDA Pro\plugins\`
+- **Linux/macOS**: `~/.idapro/plugins/`
 
-### 2. Headless Mode (CLI)
+After restarting IDA:
 
-Suitable for batch processing or automation:
-
-```bash
-/path/to/idat -c -A -S"INP.py [export_dir]" <target_file>
-```
-
-*Note: If `export_dir` is not specified, it defaults to `{IDB_directory}/export-for-ai/`.*
+- **Hotkey**: `Ctrl-Shift-E` for quick export
+- **Menu**: `Edit` -> `Plugins` -> `Export for AI`
 
 ## Exported Content
 
-| File/Directory | Content |
-|----------------|---------|
-| `decompile/` | Decompiled C code (with call relationships) |
-| `strings.txt` | String table |
-| `imports.txt` | Import table |
-| `exports.txt` | Export table |
-| `memory/` | Memory hexdump (1MB chunks) |
+
+| File/Directory          | Content                    | Description                                                                                 |
+| ----------------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
+| `decompile/`            | Decompiled C code          | Each function as a `.c` file, includes function name, address, callers, callees            |
+| `decompile_failed.txt`  | Failed decompilation list  | Records functions that failed to decompile with reasons                                     |
+| `decompile_skipped.txt` | Skipped functions list     | Records skipped library functions and invalid functions                                     |
+| `strings.txt`           | String table               | Includes address, length, type (ASCII/UTF-16/UTF-32), content                               |
+| `imports.txt`           | Import table               | Format: `address:function_name`                                                             |
+| `exports.txt`           | Export table               | Format: `address:function_name`                                                             |
+| `memory/`               | Memory hexdump             | 1MB chunks, hexdump format with address, hex bytes, ASCII                                   |
+
+## Features
+
+### Decompiled Function Export
+
+Each function is exported as a separate `.c` file with metadata header:
+
+```c
+/*
+ * func-name: sub_401000
+ * func-address: 0x401000
+ * callers: 0x402000, 0x403000
+ * callees: 0x404000, 0x405000
+ */
+
+// Decompiled code...
+```
+
+**Smart Handling**:
+
+- Automatically skips library functions and invalid functions
+- Handles special characters and duplicate function names (adds address suffix)
+- Generates detailed failure and skip logs
+- Shows export progress (every 100 functions)
+
+### Call Relationship Analysis
+
+- **Callers**: Which functions call the current function
+- **Callees**: Which functions are called by the current function
+- Helps AI understand function dependencies and call chains
+
+### Memory Export
+
+- Exports all memory data by segments
+- Maximum 1MB per file, automatically chunked
+- Hexdump format with address, hex bytes, and ASCII display
+- Filename format: `start_address--end_address.txt`
+
+### Statistics
+
+Displays detailed statistics after export:
+
+- Total number of functions
+- Successfully exported count
+- Skipped count (library/invalid functions)
+- Failed count (with failure reasons)
+- Memory export size and file count
 
 ## Tips
 
 You can add more context in the IDB directory to give AI a complete picture:
 
-| Directory | Content |
-|-----------|---------|
-| `apk/` | APK decompilation directory (APKLab one-click export) |
-| `docs/` | Reverse engineering reports, notes |
-| `codes/` | exp, Frida scripts, decryptor, etc. |
+
+| Directory | Content                                              |
+| --------- | ---------------------------------------------------- |
+| `apk/`    | APK decompilation directory (APKLab one-click export) |
+| `docs/`   | Reverse engineering reports, notes                  |
+| `codes/`  | exp, Frida scripts, decryptor, etc.                 |
 
 State-of-the-art AI models can leverage all this information and scripts to provide you with the most powerful reverse engineering assistance.

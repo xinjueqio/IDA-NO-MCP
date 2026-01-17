@@ -1,5 +1,5 @@
 # ida_export_for_ai.py
-# IDAPython script to export decompiled functions, strings, memory, imports and exports for AI analysis
+# IDA Plugin to export decompiled functions, strings, memory, imports and exports for AI analysis
 
 import os
 import ida_hexrays
@@ -12,6 +12,8 @@ import ida_entry
 import idautils
 import idc
 import ida_auto
+import ida_kernwin
+import ida_idaapi
 
 def get_idb_directory():
     """获取 IDB 文件所在目录"""
@@ -56,29 +58,64 @@ def format_address_list(addr_list):
     """格式化地址列表为逗号分隔的十六进制字符串"""
     return ", ".join([hex(addr) for addr in addr_list])
 
+def sanitize_filename(name):
+    """清理函数名，使其适合作为文件名"""
+    # 替换不允许的文件名字符
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        name = name.replace(char, '_')
+    # 替换点号（避免与扩展名混淆）
+    name = name.replace('.', '_')
+    # 限制长度
+    if len(name) > 200:
+        name = name[:200]
+    return name
+
 def export_decompiled_functions(export_dir):
     """导出所有函数的反编译代码"""
     decompile_dir = os.path.join(export_dir, "decompile")
     ensure_dir(decompile_dir)
-    
+
     total_funcs = 0
     exported_funcs = 0
     failed_funcs = []
-    
-    for func_ea in idautils.Functions():
-        total_funcs += 1
+    skipped_funcs = []
+    filename_counter = {}  # 用于处理重名函数
+
+    # 收集所有函数地址
+    all_funcs = list(idautils.Functions())
+    total_funcs = len(all_funcs)
+
+    print("[*] Found {} functions to decompile".format(total_funcs))
+
+    for func_ea in all_funcs:
         func_name = idc.get_func_name(func_ea)
-        
+
+        # 跳过外部函数和导入函数
+        func = ida_funcs.get_func(func_ea)
+        if func is None:
+            skipped_funcs.append((func_ea, func_name, "not a valid function"))
+            continue
+
+        if func.flags & ida_funcs.FUNC_LIB:
+            skipped_funcs.append((func_ea, func_name, "library function"))
+            continue
+
         try:
+            # 尝试反编译
             dec_obj = ida_hexrays.decompile(func_ea)
             if dec_obj is None:
                 failed_funcs.append((func_ea, func_name, "decompile returned None"))
                 continue
-            
+
             dec_str = str(dec_obj)
+            if not dec_str or len(dec_str.strip()) == 0:
+                failed_funcs.append((func_ea, func_name, "empty decompilation result"))
+                continue
+
             callers = get_callers(func_ea)
             callees = get_callees(func_ea)
-            
+
             output_lines = []
             output_lines.append("/*")
             output_lines.append(" * func-name: {}".format(func_name))
@@ -88,33 +125,70 @@ def export_decompiled_functions(export_dir):
             output_lines.append(" */")
             output_lines.append("")
             output_lines.append(dec_str)
-            
-            output_filename = "{}.c".format(hex(func_ea))
+
+            # 使用函数名作为文件名，处理特殊字符和重名
+            safe_name = sanitize_filename(func_name)
+
+            # 处理重名：如果文件名已存在，添加地址后缀
+            if safe_name in filename_counter:
+                filename_counter[safe_name] += 1
+                output_filename = "{}_{:X}.c".format(safe_name, func_ea)
+            else:
+                filename_counter[safe_name] = 1
+                output_filename = "{}.c".format(safe_name)
+
             output_path = os.path.join(decompile_dir, output_filename)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(output_lines))
-            
+
+            # 写入文件并确保刷新
+            try:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(output_lines))
+                    f.flush()
+                    os.fsync(f.fileno())
+            except IOError as io_err:
+                failed_funcs.append((func_ea, func_name, "IO error: {}".format(str(io_err))))
+                continue
+
             exported_funcs += 1
-            
+
             if exported_funcs % 100 == 0:
-                print("[+] Exported {} functions...".format(exported_funcs))
-                
+                print("[+] Exported {} / {} functions...".format(exported_funcs, total_funcs))
+
+        except ida_hexrays.DecompilationFailure as e:
+            failed_funcs.append((func_ea, func_name, "decompilation failure: {}".format(str(e))))
+            continue
         except Exception as e:
-            failed_funcs.append((func_ea, func_name, str(e)))
+            failed_funcs.append((func_ea, func_name, "unexpected error: {}".format(str(e))))
+            print("[!] Error decompiling {} at {}: {}".format(func_name, hex(func_ea), str(e)))
             continue
     
     print("\n[*] Decompilation Summary:")
     print("    Total functions: {}".format(total_funcs))
     print("    Exported: {}".format(exported_funcs))
+    print("    Skipped: {} (library/invalid functions)".format(len(skipped_funcs)))
     print("    Failed: {}".format(len(failed_funcs)))
-    
+
+    # 保存失败列表
     if failed_funcs:
         failed_log_path = os.path.join(export_dir, "decompile_failed.txt")
         with open(failed_log_path, 'w', encoding='utf-8') as f:
+            f.write("# Failed to decompile {} functions\n".format(len(failed_funcs)))
+            f.write("# Format: address | function_name | reason\n")
+            f.write("#" + "=" * 80 + "\n\n")
             for addr, name, reason in failed_funcs:
-                f.write("{} {} - {}\n".format(hex(addr), name, reason))
+                f.write("{} | {} | {}\n".format(hex(addr), name, reason))
         print("    Failed list saved to: decompile_failed.txt")
+
+    # 保存跳过列表
+    if skipped_funcs:
+        skipped_log_path = os.path.join(export_dir, "decompile_skipped.txt")
+        with open(skipped_log_path, 'w', encoding='utf-8') as f:
+            f.write("# Skipped {} functions\n".format(len(skipped_funcs)))
+            f.write("# Format: address | function_name | reason\n")
+            f.write("#" + "=" * 80 + "\n\n")
+            for addr, name, reason in skipped_funcs:
+                f.write("{} | {} | {}\n".format(hex(addr), name, reason))
+        print("    Skipped list saved to: decompile_skipped.txt")
 
 def export_strings(export_dir):
     """导出所有字符串"""
@@ -284,12 +358,17 @@ def export_memory(export_dir):
     print("    Total bytes exported: {} ({:.2f} MB)".format(total_bytes, total_bytes / (1024*1024)))
     print("    Files created: {}".format(file_count))
 
-def main():
-    """主函数"""
+def do_export(export_dir=None, ask_user=True):
+    """执行导出操作
+
+    Args:
+        export_dir: 导出目录路径，如果为None则使用默认或询问用户
+        ask_user: 是否询问用户选择目录
+    """
     print("=" * 60)
     print("IDA Export for AI Analysis")
     print("=" * 60)
-    
+
     if not ida_hexrays.init_hexrays_plugin():
         print("[!] Hex-Rays decompiler is not available!")
         print("[!] Strings will still be exported, but no decompilation.")
@@ -298,47 +377,124 @@ def main():
         has_hexrays = True
         print("[+] Hex-Rays decompiler initialized")
 
+    print("[*] Waiting for auto-analysis to complete...")
     ida_auto.auto_wait()
 
-    # Example usage: idat -S"INP.py <export_dir>"
-    argc = int(idc.eval_idc("ARGV.count"))
-    if argc < 2:
+    if export_dir is None:
         idb_dir = get_idb_directory()
-        export_dir = os.path.join(idb_dir, "export-for-ai")
-    else:
-        export_dir = idc.eval_idc("ARGV[1]")
+        default_export_dir = os.path.join(idb_dir, "export-for-ai")
+
+        if ask_user:
+            # 询问用户是否使用默认目录
+            choice = ida_kernwin.ask_yn(ida_kernwin.ASKBTN_YES,
+                "Export to default directory?\n\n{}\n\nYes: Use default directory\nNo: Choose custom directory\nCancel: Abort export".format(default_export_dir))
+
+            if choice == ida_kernwin.ASKBTN_CANCEL:
+                print("[*] Export cancelled by user")
+                return
+            elif choice == ida_kernwin.ASKBTN_NO:
+                # 让用户输入目录路径
+                selected_dir = ida_kernwin.ask_str(default_export_dir, 0, "Enter export directory path:")
+                if selected_dir:
+                    export_dir = selected_dir
+                    print("[*] Using custom directory: {}".format(export_dir))
+                else:
+                    print("[*] Export cancelled by user")
+                    return
+            else:
+                export_dir = default_export_dir
+        else:
+            export_dir = default_export_dir
+
     ensure_dir(export_dir)
-    
+
     print("[+] Export directory: {}".format(export_dir))
     print("")
-    
+
     print("[*] Exporting strings...")
     export_strings(export_dir)
     print("")
-    
+
     print("[*] Exporting imports...")
     export_imports(export_dir)
     print("")
-    
+
     print("[*] Exporting exports...")
     export_exports(export_dir)
     print("")
-    
+
     print("[*] Exporting memory...")
     export_memory(export_dir)
     print("")
-    
+
     if has_hexrays:
         print("[*] Exporting decompiled functions...")
         export_decompiled_functions(export_dir)
-    
+
     print("")
     print("=" * 60)
     print("[+] Export completed!")
     print("    Output directory: {}".format(export_dir))
     print("=" * 60)
-    
-    idc.qexit(0)
+
+    ida_kernwin.info("Export completed!\n\nOutput directory:\n{}".format(export_dir))
+
+
+# ============================================================================
+# Plugin Class
+# ============================================================================
+
+class ExportForAIPlugin(ida_idaapi.plugin_t):
+    """IDA Plugin for exporting data for AI analysis"""
+
+    flags = ida_idaapi.PLUGIN_KEEP
+    comment = "Export IDA data for AI analysis"
+    help = "Export decompiled functions, strings, memory, imports and exports"
+    wanted_name = "Export for AI"
+    wanted_hotkey = "Ctrl-Shift-E"
+
+    def init(self):
+        """插件初始化"""
+        print("[+] Export for AI plugin loaded")
+        print("    Hotkey: {}".format(self.wanted_hotkey))
+        print("    Menu: Edit -> Plugins -> Export for AI")
+        return ida_idaapi.PLUGIN_KEEP
+
+    def run(self, arg):
+        """插件运行"""
+        try:
+            do_export()
+        except Exception as e:
+            print("[!] Export failed: {}".format(str(e)))
+            import traceback
+            traceback.print_exc()
+            ida_kernwin.warning("Export failed!\n\n{}".format(str(e)))
+
+    def term(self):
+        """插件卸载"""
+        print("[-] Export for AI plugin unloaded")
+
+
+def PLUGIN_ENTRY():
+    """IDA插件入口点"""
+    return ExportForAIPlugin()
+
+
+# ============================================================================
+# Standalone Script Support
+# ============================================================================
 
 if __name__ == "__main__":
-    main()
+    # 支持作为独立脚本运行（用于批处理模式）
+    argc = int(idc.eval_idc("ARGV.count"))
+    if argc < 2:
+        export_dir = None
+    else:
+        export_dir = idc.eval_idc("ARGV[1]")
+
+    # 批处理模式不询问用户
+    do_export(export_dir, ask_user=False)
+
+    # 只在批处理模式下退出
+    if argc >= 2:
+        idc.qexit(0)
