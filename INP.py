@@ -127,9 +127,8 @@ def export_decompiled_functions(export_dir):
             output_lines.append("")
             output_lines.append(dec_str)
 
-            # 使用函数名+地址作为文件名，确保唯一性
-            safe_name = sanitize_filename(func_name)
-            output_filename = "{}_{:X}.c".format(safe_name, func_ea)
+            # 使用函数地址作为文件名
+            output_filename = "{:X}.c".format(func_ea)
 
             output_path = os.path.join(decompile_dir, output_filename)
 
